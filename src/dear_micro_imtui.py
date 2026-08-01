@@ -420,10 +420,10 @@ class UI:
 
         # Edit with LEFT / RIGHT when focused
         if is_focused:
-            if ctx.event == Key.LEFT:
+            if ctx.event == Key.LEFT :
                 value = max(min_val, value - step)
                 ctx.event = None
-            elif ctx.event == Key.RIGHT:
+            elif ctx.event == Key.RIGHT or activated:
                 value = min(max_val, value + step)
                 ctx.event = None
 
