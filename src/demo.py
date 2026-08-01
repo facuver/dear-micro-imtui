@@ -13,9 +13,9 @@ class Dashboard(App):
         self.last_frame_time = time.ticks_ms()
 
     def on_ui(self):
+
         if self.show_help:
-            for key,help in self.keybindings._help.items():
-                UI.label(self.ctx,f"{key}: {help}")
+            UI.window(self.ctx, [f"{key}: {help}" for key,help in self.keybindings._help.items()], y=2,x=2 )
             return
 
 
@@ -77,6 +77,7 @@ class Dashboard(App):
                  f"{Term.DIM}UP/DOWN: navigate  |  ENTER/SPACE/MOUSE: activate{Term.RESET}", x=2)
         UI.label(self.ctx,
                  f"{Term.DIM}LEFT/RIGHT: edit values  |  ESC: exit{Term.RESET}", x=2)
+
 
         # Exit on ESC
         if self.ctx.event == Key.ESCAPE:

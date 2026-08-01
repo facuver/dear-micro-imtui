@@ -499,6 +499,25 @@ class UI:
         ctx.cursor_y += 3
         return activated
 
+    @staticmethod
+    def window(ctx: UIContext,   lines: list[str],
+                width: int = 30, x=None, y=None) -> bool:
+        UI._resolve_pos(ctx, x, y)
+
+        border = Term.BLUE
+        top = f"┌{'─' * (width - 2)}┐"
+
+
+        bot = f"└{'─' * (width - 2)}┘"
+
+
+        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, f"{border}{top}{Term.RESET}")
+        for i,line in enumerate(lines):
+
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y + 1 + i, f"{border}│{line.center(width-2)}│{Term.RESET}")
+        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y + 1+ len(lines), f"{border}{bot}{Term.RESET}")
+        ctx.cursor_y += 3
+
 
 # ------------------------------------------------------------------
 # 7. Application base class
