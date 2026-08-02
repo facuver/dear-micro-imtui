@@ -1,4 +1,4 @@
-from dear_micro_imgui import App, UI, Term, Key
+from dear_micro_imtui import App, UI, Term, Key
 import machine
 import neopixel
 import time
@@ -9,26 +9,37 @@ pixel = neopixel.NeoPixel(machine.Pin(16), 1)
 
 class Dashboard(App):
     def __init__(self):
-        super().__init__(fps=40)
+        super().__init__(max_fps=15)
         self.power = False
         self.brightness = 40
         self.pixel = pixel = neopixel.NeoPixel(machine.Pin(16), 1)
         self.red =0
         self.green =0
         self.blue =0
+        self.auto_update = False
 
     def on_ui(self):
-
-        self.red = UI.slider(self.ctx,"RED",self.red,min_val=0,max_val=10)
+        UI.label(self.ctx,f"{Term.DIM} FPS : {self.frame_rate}{Term.RESET} ",x=20)
+        self.red = UI.slider(self.ctx,"RED",self.red,min_val=0,max_val=10,x=2)
         self.green = UI.slider(self.ctx,"GREEN",self.green,min_val=0,max_val=10)
         self.blue = UI.slider(self.ctx,"BLUE",self.blue,min_val=0,max_val=10)
 
 
-        if UI.button(self.ctx,"Off"):
-            self.red,self.green,self.blue = 0,0,0
-        self.pixel[0] = (self.red*25, self.green*25, self.blue*25)
-        self.pixel.write()
+        self.auto_update= UI.checkbox(self.ctx,"Auto-Update", self.auto_update)
 
+
+        if self.auto_update:
+            self.pixel[0] = (self.red*25, self.green*25, self.blue*25)
+            self.pixel.write()
+        else:
+            if UI.button(self.ctx,"Off"):
+                self.red,self.green,self.blue = 0,0,0
+                self.pixel[0] = (self.red*25, self.green*25, self.blue*25)
+                self.pixel.write()
+
+            if UI.button(self.ctx,"Update", x=10,y=-1):
+                self.pixel[0] = (self.red*25, self.green*25, self.blue*25)
+                self.pixel.write()
     def turn_off(self,ctx,e):
         self.red,self.green,self.blue = 0,0,0
         self.pixel.write()

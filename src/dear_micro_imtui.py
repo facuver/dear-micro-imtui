@@ -1,3 +1,4 @@
+import time
 import sys
 
 # ------------------------------------------------------------------
@@ -250,6 +251,18 @@ class UIContext:
         self.event = None       # current frame's unconsumed event
         self.cursor_x = 1
         self.cursor_y = 1
+        self.text_cache = {}    # (x, y) -> (params, rendered_text)
+
+    def cached_render(self, params, build):
+        """Reuse the cached string at the cursor if `params` match last frame,
+        otherwise call `build()` once and store the result."""
+        key = (self.cursor_x, self.cursor_y)
+        cached = self.text_cache.get(key)
+        if cached is not None and cached[0] == params:
+            return cached[1]
+        text = build()
+        self.text_cache[key] = (params, text)
+        return text
 
     def begin_frame(self, event):
         self.widget_count = self.widget_counter
@@ -351,12 +364,17 @@ class UI:
     def gauge(ctx: UIContext, label: str, value: int, max_val: int,
               width: int = 20, x=None, y=None):
         UI._resolve_pos(ctx, x, y)
-        ratio = max(0.0, min(1.0, value / max_val)) if max_val else 0
-        filled = int(width * ratio)
-        empty = width - filled
-        bar = "█" * filled + "░" * empty
-        pct = f"{int(ratio * 100):>3}%"
-        text = f"{label:<12} {Term.CYAN}{bar}{Term.RESET} {pct}"
+
+        # Cache: only rebuild the string if these params changed since last frame.
+        def build():
+            ratio = max(0.0, min(1.0, value / max_val)) if max_val else 0
+            filled = int(width * ratio)
+            empty = width - filled
+            bar = "█" * filled + "░" * empty
+            pct = f"{int(ratio * 100):>3}%"
+            return f"{label:<12} {Term.CYAN}{bar}{Term.RESET} {pct}"
+
+        text = ctx.cached_render((label, value, max_val, width), build)
         ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
         ctx.cursor_y += 1
 
@@ -413,7 +431,6 @@ class UI:
                        min_val: int = 0, max_val: int = 99, step: int = 1,
                        x=None, y=None) -> int:
         UI._resolve_pos(ctx, x, y)
-        val_str = f"{value:02d}"
         width = len(label) + 12
 
         is_focused, activated = UI.clickable(ctx, ctx.cursor_x, ctx.cursor_y, width, 1)
@@ -427,13 +444,18 @@ class UI:
                 value = min(max_val, value + step)
                 ctx.event = None
 
-        prefix = " > " if is_focused else "   "
-        if is_focused:
-            val_render = f"{Term.BG_CYAN}{Term.BLACK}<{val_str}>{Term.RESET}"
-        else:
-            val_render = f" {val_str} "
+        # Cache: only rebuild the string if these params changed since last frame.
+        # Note: `is_focused` is included because it changes the look.
+        def build():
+            val_str = f"{value:02d}"
+            prefix = " > " if is_focused else "   "
+            if is_focused:
+                val_render = f"{Term.BG_CYAN}{Term.BLACK}<{val_str}>{Term.RESET}"
+            else:
+                val_render = f" {val_str} "
+            return f"{prefix}{label:<15} {val_render}"
 
-        text = f"{prefix}{label:<15} {val_render}"
+        text = ctx.cached_render((label, value, is_focused), build)
         ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
         ctx.cursor_y += 1
         return value
@@ -457,15 +479,18 @@ class UI:
                 value = min(max_val, value + 1)
                 ctx.event = None
 
-        ratio = (value - min_val) / (max_val - min_val) if max_val != min_val else 0
-        filled = int(width * ratio)
-        empty = width - filled
-        bar = "█" * filled + " " * empty
-        bar_str = f"[{bar}]"
-        if is_focused:
-            bar_str = f"{Term.BG_BLUE}{Term.WHITE}{bar_str}{Term.RESET}"
+        # Cache: only rebuild the string if these params changed since last frame.
+        def build():
+            ratio = (value - min_val) / (max_val - min_val) if max_val != min_val else 0
+            filled = int(width * ratio)
+            empty = width - filled
+            bar = "█" * filled + " " * empty
+            bar_str = f"[{bar}]"
+            if is_focused:
+                bar_str = f"{Term.BG_BLUE}{Term.WHITE}{bar_str}{Term.RESET}"
+            return f"{' > ' if is_focused else '   '}{label:<12} {bar_str} {value}"
 
-        text = f"{' > ' if is_focused else '   '}{label:<12} {bar_str} {value}"
+        text = ctx.cached_render((label, value, min_val, max_val, width, is_focused), build)
         ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
         ctx.cursor_y += 1
         return value
@@ -523,10 +548,12 @@ class UI:
 # 7. Application base class
 # ------------------------------------------------------------------
 class App:
-    def __init__(self, fps: int = 30):
+    def __init__(self, max_fps: int = 30):
         self.ctx = UIContext()
         self.reader = InputReader()
-        self.fps_ms = int(1000 / fps)
+        self.fps_ms = int(1000 / max_fps)
+        self.frame_rate = 0
+        self.last_frame_time = time.ticks_ms()
         self._latest_event = None
         self._running = True
 
@@ -541,15 +568,16 @@ class App:
 
     async def _ui_loop(self):
         while self._running:
+            self.frame_rate = time.ticks_diff(time.ticks_ms(),self.last_frame_time)
+            self.last_frame_time= time.ticks_ms()
+
             event = self._latest_event
             self._latest_event = None
 
             self.ctx.begin_frame(event)
 
-            # PHASE 1: Early bindings (global shortcuts)
             if self.ctx.event and self.keybindings.handle(self.ctx, self.ctx.event, "early"):
                 self.ctx.event = None
-
             self.on_ui()
 
             # PHASE 2: Late bindings (navigation & overrides)

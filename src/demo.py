@@ -1,8 +1,8 @@
-from dear_micro_imgui import App, UI, Term, Key
+from dear_micro_imtui import App, UI, Term, Key
 import time
 class Dashboard(App):
     def __init__(self):
-        super().__init__(fps=40)
+        super().__init__(max_fps=100)
         self.power = False
         self.brightness = 40
         self.volume = 60
