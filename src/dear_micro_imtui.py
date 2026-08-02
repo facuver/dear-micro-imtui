@@ -258,11 +258,11 @@ class UIContext:
         otherwise call `build()` once and store the result."""
         key = (self.cursor_x, self.cursor_y)
         cached = self.text_cache.get(key)
-        if cached is not None and cached[0] == params:
-            return cached[1]
+        if cached is not None and cached[0] == params :
+            return cached[1],True
         text = build()
         self.text_cache[key] = (params, text)
-        return text
+        return text,False
 
     def begin_frame(self, event):
         self.widget_count = self.widget_counter
@@ -322,7 +322,7 @@ class UI:
             ctx.event = None
 
         # Mouse activation + hit-test
-        if isinstance(ctx.event, MouseClick):
+        elif isinstance(ctx.event, MouseClick):
             m = ctx.event
             if m.action == "PRESS" and m.button == "LEFT":
                 if x <= m.x < x + width and y <= m.y < y + height:
@@ -374,7 +374,7 @@ class UI:
             pct = f"{int(ratio * 100):>3}%"
             return f"{label:<12} {Term.CYAN}{bar}{Term.RESET} {pct}"
 
-        text = ctx.cached_render((label, value, max_val, width), build)
+        text,hit = ctx.cached_render((label, value, max_val, width), build)
         ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
         ctx.cursor_y += 1
 
@@ -455,7 +455,7 @@ class UI:
                 val_render = f" {val_str} "
             return f"{prefix}{label:<15} {val_render}"
 
-        text = ctx.cached_render((label, value, is_focused), build)
+        text,hit = ctx.cached_render((label, value, is_focused), build)
         ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
         ctx.cursor_y += 1
         return value
@@ -464,11 +464,11 @@ class UI:
     def slider(ctx: UIContext, label: str, value: int,
                min_val: int = 0, max_val: int = 100, width: int = 20,
                x=None, y=None) -> int:
+
         UI._resolve_pos(ctx, x, y)
         bar_visual = width + 2  # [....]
         value_w = len(str(max_val))
         total_w = len(label) + 1 + bar_visual + 1 + value_w + 3
-
         is_focused, activated = UI.clickable(ctx, ctx.cursor_x, ctx.cursor_y, total_w, 1)
 
         if is_focused:
@@ -490,8 +490,10 @@ class UI:
                 bar_str = f"{Term.BG_BLUE}{Term.WHITE}{bar_str}{Term.RESET}"
             return f"{' > ' if is_focused else '   '}{label:<12} {bar_str} {value}"
 
-        text = ctx.cached_render((label, value, min_val, max_val, width, is_focused), build)
+        text,hit = ctx.cached_render((label, value, min_val, max_val, width, is_focused), build)
+
         ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
+
         ctx.cursor_y += 1
         return value
 

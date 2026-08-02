@@ -9,23 +9,25 @@ pixel = neopixel.NeoPixel(machine.Pin(16), 1)
 
 class Dashboard(App):
     def __init__(self):
-        super().__init__(max_fps=15)
+        super().__init__(max_fps=100)
         self.power = False
         self.brightness = 40
         self.pixel = pixel = neopixel.NeoPixel(machine.Pin(16), 1)
         self.red =0
         self.green =0
         self.blue =0
-        self.auto_update = False
+        self.auto_update = True
 
     def on_ui(self):
-        UI.label(self.ctx,f"{Term.DIM} FPS : {self.frame_rate}{Term.RESET} ",x=20)
+        self.auto_update= UI.checkbox(self.ctx,"Auto-Update", self.auto_update ,x=5)
+        UI.label(self.ctx,f"{Term.DIM} FPS : {1000//self.frame_rate} {Term.RESET} ",x=20,y=-1)
+
         self.red = UI.slider(self.ctx,"RED",self.red,min_val=0,max_val=10,x=2)
+
         self.green = UI.slider(self.ctx,"GREEN",self.green,min_val=0,max_val=10)
-        self.blue = UI.slider(self.ctx,"BLUE",self.blue,min_val=0,max_val=10)
+        self.blue= UI.slider(self.ctx,"BLUE",self.blue,min_val=0,max_val=10)
 
-
-        self.auto_update= UI.checkbox(self.ctx,"Auto-Update", self.auto_update)
+        # UI.label(self.ctx,f"times")
 
 
         if self.auto_update:
