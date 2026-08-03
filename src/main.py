@@ -17,11 +17,12 @@ class Dashboard(App):
         self.green =0
         self.blue =0
         self.auto_update = True
+        self.text1= "Placeholder"
 
     def on_ui(self):
-        self.auto_update= UI.checkbox(self.ctx,"Auto-Update", self.auto_update ,x=5)
+        self.auto_update= UI.checkbox(self.ctx,"Auto-Update", self.auto_update ,x=5, y=2)
         UI.label(self.ctx,f"{Term.DIM} FPS : {1000//self.frame_rate} {Term.RESET} ",x=20,y=-1)
-
+        self.text1 = UI.input(self.ctx,self.text1,label="Test",x=5, width=10)
         self.red = UI.slider(self.ctx,"RED",self.red,min_val=0,max_val=10,x=2)
 
         self.green = UI.slider(self.ctx,"GREEN",self.green,min_val=0,max_val=10)
@@ -47,7 +48,7 @@ class Dashboard(App):
         self.pixel.write()
     def _setup_default_keybindings(self):
         super()._setup_default_keybindings()
-        self.keybindings.bind("o",  self.turn_off, help="off",phase="early")
+        self.keybindings.bind("o",  self.turn_off, help="off",phase="late")
 
 app = Dashboard()
 app.run()
