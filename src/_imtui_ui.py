@@ -1,10 +1,26 @@
-import time
 from _imtui_buffer import Buffer
 from _imtui_input import Key, MouseClick
 from _imtui_term import Term
 import micropython
 
+
 class UIContext:
+    __slots__ = (
+        "active_id",
+        "widget_counter",
+        "widget_count",
+        "buffer",
+        "event",
+        "cursor_x",
+        "cursor_y",
+        "text_cache",
+        "_last_frame_bottom",
+        "_force_full_redraw",
+        "_force_full_redraw_next",
+        "_event_is_mouse",
+        "_mouse_event",
+    )
+
     def __init__(self):
         self.active_id = None   # which widget has focus
         self.widget_counter = 0 # IDs issued this frame
@@ -13,25 +29,31 @@ class UIContext:
         self.event = None       # current frame's unconsumed event
         self.cursor_x = 1
         self.cursor_y = 1
-        self.text_cache = {}    # (x, y) -> (params, rendered_text)
+        # key: packed (y << 16) | x -> (params, rendered_text)
+        self.text_cache = {}
         self._last_frame_bottom = 0
         self._force_full_redraw = False
         self._force_full_redraw_next = False
 
+        # pre-decoded event hints for faster widget checks
+        self._event_is_mouse = False
+        self._mouse_event = None
 
     @micropython.native
-    def cached_render(self, params, build):
-        """Reuse cached string unless a full redraw was requested."""
-        key = (self.cursor_x, self.cursor_y)
+    def _cache_key(self):
+        return (self.cursor_y << 16) | self.cursor_x
+
+    @micropython.native
+    def cache_get(self, params):
+        key = self._cache_key()
         cached = self.text_cache.get(key)
         if cached is not None and cached[0] == params:
-            # Force one frame to re-send cached rows after terminal clear/redraw.
-            if self._force_full_redraw:
-                return cached[1], False
-            return cached[1], True
-        text = build()
-        self.text_cache[key] = (params, text)
-        return text, False
+            return cached[1]
+        return None
+
+    @micropython.native
+    def cache_store(self, params, text):
+        self.text_cache[self._cache_key()] = (params, text)
 
     def begin_frame(self, event):
         # Apply any redraw requested after the previous frame's draw phase.
@@ -46,6 +68,9 @@ class UIContext:
         self.event = event
         self.cursor_x = 1
         self.cursor_y = 1
+
+        self._event_is_mouse = isinstance(event, MouseClick)
+        self._mouse_event = event if self._event_is_mouse else None
 
         # Clamp focus if widget count changed (dynamic UIs)
         if self.widget_count > 0 and self.active_id is not None:
@@ -66,7 +91,7 @@ class UIContext:
         if frame_bottom < self._last_frame_bottom:
             clear_from_y = frame_bottom + 1
 
-        self.buffer.flush(clear_from_y=clear_from_y)
+        self.buffer.flush(clear_from_y=clear_from_y, force=self._force_full_redraw)
         self._last_frame_bottom = frame_bottom
         self._force_full_redraw = False
 
@@ -101,7 +126,6 @@ class UI:
                 ctx.cursor_y = y
 
     # -- primitive ------------------------------------------------------
-    #
     @micropython.native
     @staticmethod
     def clickable(ctx: UIContext, x: int, y: int, width: int, height: int = 1):
@@ -113,19 +137,23 @@ class UI:
         activated = False
 
         # Keyboard activation
-        if is_focused and ctx.event in (Key.ENTER,):
+        if is_focused and ctx.event == Key.ENTER:
             activated = True
             ctx.event = None
 
         # Mouse activation + hit-test
-        elif isinstance(ctx.event, MouseClick):
-            m = ctx.event
+        elif ctx._event_is_mouse and ctx.event is not None and ctx._mouse_event is not None:
+            m = ctx._mouse_event
             if m.action == "PRESS" and m.button == "LEFT":
-                if x <= m.x < x + width and y <= m.y < y + height:
+                mx = m.x
+                my = m.y
+                if x <= mx < x + width and y <= my < y + height:
                     ctx.active_id = w_id
                     is_focused = True
                     activated = True
                     ctx.event = None
+                    ctx._event_is_mouse = False
+                    ctx._mouse_event = None
 
         return is_focused, activated
 
@@ -133,33 +161,54 @@ class UI:
     @staticmethod
     def label(ctx: UIContext, text: str, x=None, y=None):
         UI._resolve_pos(ctx, x, y)
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
+        cached = ctx.cache_get(("label", text))
+        if cached is None:
+            cached = text
+            ctx.cache_store(("label", text), cached)
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+        elif ctx._force_full_redraw:
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
         ctx.cursor_y += 1
 
     @staticmethod
     def clear_line(ctx: UIContext, y=None):
         UI._resolve_pos(ctx, None, y)
+        # clear_line is intentionally not cached; it is a side-effect op.
         ctx.buffer.add_at(1, ctx.cursor_y, "")
 
     @staticmethod
     def divider(ctx: UIContext, width: int = 34, char: str = "─", x=None, y=None):
         UI._resolve_pos(ctx, x, y)
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y,
-                          f"{Term.DIM}{char * width}{Term.RESET}")
+        params = ("divider", width, char)
+        cached = ctx.cache_get(params)
+        if cached is None:
+            cached = f"{Term.DIM}{char * width}{Term.RESET}"
+            ctx.cache_store(params, cached)
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+        elif ctx._force_full_redraw:
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
         ctx.cursor_y += 1
 
     @staticmethod
     def badge(ctx: UIContext, label: str, value: str, color=Term.GREEN, x=None, y=None):
         UI._resolve_pos(ctx, x, y)
-        text = (f"{Term.DIM}[{Term.RESET}{label}: "
-                f"{color}{Term.BOLD}{value}{Term.RESET}{Term.DIM}]{Term.RESET}")
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
+        params = ("badge", label, value, color)
+        cached = ctx.cache_get(params)
+        if cached is None:
+            cached = (
+                f"{Term.DIM}[{Term.RESET}{label}: "
+                f"{color}{Term.BOLD}{value}{Term.RESET}{Term.DIM}]{Term.RESET}"
+            )
+            ctx.cache_store(params, cached)
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+        elif ctx._force_full_redraw:
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
         ctx.cursor_y += 1
 
     @staticmethod
-    def input(ctx: UIContext, value: str, label = "", width=20, x=None, y=None):
+    def input(ctx: UIContext, value: str, label="", width=20, x=None, y=None):
         UI._resolve_pos(ctx, x, y)
-        is_focused, activated = UI.clickable(ctx, ctx.cursor_x, ctx.cursor_y, width, 1)
+        is_focused, _ = UI.clickable(ctx, ctx.cursor_x, ctx.cursor_y, width, 1)
 
         if is_focused:
             ev = ctx.event
@@ -169,14 +218,23 @@ class UI:
             elif ev == Key.BACKSPACE:
                 value = value[:-1]
                 ctx.event = None
-        prefix = label + ": " if label else ""
-        sufix = ('_' if is_focused else '')
-        sufix += (" " * (width - len(value + sufix)))
-        ctx.buffer.add_at(
-            ctx.cursor_x,
-            ctx.cursor_y,
-            f"{prefix}{Term.UNDERLINE}{Term.BG_CYAN+Term.BLACK if is_focused else ''}{value}{sufix}{Term.RESET}",
-        )
+
+        params = ("input", label, value, width, is_focused)
+        cached = ctx.cache_get(params)
+        if cached is None:
+            prefix = label + ": " if label else ""
+            suffix = "_" if is_focused else ""
+            pad = width - len(value) - len(suffix)
+            if pad > 0:
+                suffix += " " * pad
+
+            focus_style = Term.BG_CYAN + Term.BLACK if is_focused else ""
+            cached = f"{prefix}{Term.UNDERLINE}{focus_style}{value}{suffix}{Term.RESET}"
+            ctx.cache_store(params, cached)
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+        elif ctx._force_full_redraw:
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+
         ctx.cursor_y += 1
         return value
 
@@ -185,17 +243,20 @@ class UI:
               width: int = 20, x=None, y=None):
         UI._resolve_pos(ctx, x, y)
 
-        # Cache: only rebuild the string if these params changed since last frame.
-        def build():
-            ratio = max(0.0, min(1.0, value / max_val)) if max_val else 0
+        params = ("gauge", label, value, max_val, width)
+        cached = ctx.cache_get(params)
+        if cached is None:
+            ratio = max(0.0, min(1.0, value / max_val)) if max_val else 0.0
             filled = int(width * ratio)
             empty = width - filled
             bar = "█" * filled + "░" * empty
             pct = f"{int(ratio * 100):>3}%"
-            return f"{label:<12} {Term.CYAN}{bar}{Term.RESET} {pct}"
+            cached = f"{label:<12} {Term.CYAN}{bar}{Term.RESET} {pct}"
+            ctx.cache_store(params, cached)
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+        elif ctx._force_full_redraw:
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
 
-        text, hit = ctx.cached_render((label, value, max_val, width), build)
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
         ctx.cursor_y += 1
 
     # -- interactive ----------------------------------------------------
@@ -205,9 +266,16 @@ class UI:
         width = len(label) + 4
         is_focused, activated = UI.clickable(ctx, ctx.cursor_x, ctx.cursor_y, width, 1)
 
-        bg = Term.BG_BLUE if is_focused else ""
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y,
-                          f"{bg}[ {label} ]{Term.RESET}")
+        params = ("button", label, is_focused)
+        cached = ctx.cache_get(params)
+        if cached is None:
+            bg = Term.BG_BLUE if is_focused else ""
+            cached = f"{bg}[ {label} ]{Term.RESET}"
+            ctx.cache_store(params, cached)
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+        elif ctx._force_full_redraw:
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+
         ctx.cursor_y += 1
         return activated
 
@@ -220,9 +288,19 @@ class UI:
 
         if activated:
             checked = not checked
+            mark = "X" if checked else " "
+            text = f"[{mark}] {label}"
 
-        bg = Term.BG_BLUE if is_focused else ""
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, f"{bg}{text}{Term.RESET}")
+        params = ("checkbox", label, checked, is_focused)
+        cached = ctx.cache_get(params)
+        if cached is None:
+            bg = Term.BG_BLUE if is_focused else ""
+            cached = f"{bg}{text}{Term.RESET}"
+            ctx.cache_store(params, cached)
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+        elif ctx._force_full_redraw:
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+
         ctx.cursor_y += 1
         return checked
 
@@ -235,14 +313,21 @@ class UI:
         if activated:
             active = not active
 
-        prefix = " > " if is_focused else "   "
-        if active:
-            status = f"{Term.BG_GREEN}{Term.BLACK} ON {Term.RESET}"
-        else:
-            status = f"{Term.BG_RED}{Term.WHITE} OFF {Term.RESET}"
+        params = ("toggle", label, active, is_focused)
+        cached = ctx.cache_get(params)
+        if cached is None:
+            prefix = " > " if is_focused else "   "
+            if active:
+                status = f"{Term.BG_GREEN}{Term.BLACK} ON {Term.RESET}"
+            else:
+                status = f"{Term.BG_RED}{Term.WHITE} OFF {Term.RESET}"
 
-        text = f"{prefix}{label:<15} {status}"
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
+            cached = f"{prefix}{label:<15} {status}"
+            ctx.cache_store(params, cached)
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+        elif ctx._force_full_redraw:
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+
         ctx.cursor_y += 1
         return active
 
@@ -264,37 +349,34 @@ class UI:
                 value = min(max_val, value + step)
                 ctx.event = None
 
-        # Cache: only rebuild the string if these params changed since last frame.
-        # Note: `is_focused` is included because it changes the look.
-        def build():
+        params = ("stepper", label, value, is_focused)
+        cached = ctx.cache_get(params)
+        if cached is None:
             val_str = f"{value:02d}"
             prefix = " > " if is_focused else "   "
             if is_focused:
                 val_render = f"{Term.BG_CYAN}{Term.BLACK}<{val_str}>{Term.RESET}"
             else:
                 val_render = f" {val_str} "
-            return f"{prefix}{label:<15} {val_render}"
+            cached = f"{prefix}{label:<15} {val_render}"
+            ctx.cache_store(params, cached)
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+        elif ctx._force_full_redraw:
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
 
-        text, hit = ctx.cached_render((label, value, is_focused), build)
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
         ctx.cursor_y += 1
         return value
 
-
-    @micropython.native
     @staticmethod
     def slider(ctx: UIContext, label: str, value: int,
                min_val: int = 0, max_val: int = 100, width: int = 20,
                x=None, y=None) -> int:
-        start_time=  time.ticks_us()
-
         UI._resolve_pos(ctx, x, y)
-        t1 = time.ticks_us()
         bar_visual = width + 2  # [....]
         value_w = len(str(max_val))
-        total_w = 12+ 1 + bar_visual + 1 + value_w + 3
-        t2 = time.ticks_us()
-        is_focused, activated = UI.clickable(ctx, ctx.cursor_x, ctx.cursor_y, total_w, 1)
+        total_w = 12 + 1 + bar_visual + 1 + value_w + 3
+
+        is_focused, _ = UI.clickable(ctx, ctx.cursor_x, ctx.cursor_y, total_w, 1)
 
         if is_focused:
             if ctx.event == Key.LEFT:
@@ -303,28 +385,35 @@ class UI:
             elif ctx.event == Key.RIGHT:
                 value = min(max_val, value + 1)
                 ctx.event = None
-        t3 = time.ticks_us()
 
-        # Cache: only rebuild the string if these paraus changed since last frame.
-        def build():
-            ratio = (value - min_val) / (max_val - min_val) if max_val != min_val else 0
+        params = ("slider", label, value, min_val, max_val, width, is_focused)
+        cached = ctx.cache_get(params)
+        if cached is None:
+            if max_val != min_val:
+                ratio = (value - min_val) / (max_val - min_val)
+            else:
+                ratio = 0.0
+
+            if ratio < 0.0:
+                ratio = 0.0
+            elif ratio > 1.0:
+                ratio = 1.0
+
             filled = int(width * ratio)
             empty = width - filled
             bar = "█" * filled + " " * empty
             bar_str = f"[{bar}]"
             if is_focused:
                 bar_str = f"{Term.BG_BLUE}{Term.WHITE}{bar_str}{Term.RESET}"
-            return f"{' > ' if is_focused else '   '}{label:<12} {bar_str} {value}"
-        t4 = time.ticks_us()
 
-        text, hit = ctx.cached_render((label, value, min_val, max_val, width, is_focused), build)
-        t5 = time.ticks_us()
-
-        if not hit: ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
-        t6 = time.ticks_us()
+            cached = f"{' > ' if is_focused else '   '}{label:<12} {bar_str} {value}"
+            ctx.cache_store(params, cached)
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
+        elif ctx._force_full_redraw:
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached)
 
         ctx.cursor_y += 1
-        return value,(t1-start_time,t2-t1,t3-t2,t4-t3,t5-t4,t6-t5)
+        return value
 
     @staticmethod
     def card(ctx: UIContext, title: str, subtitle: str,
@@ -332,26 +421,41 @@ class UI:
         UI._resolve_pos(ctx, x, y)
         is_focused, activated = UI.clickable(ctx, ctx.cursor_x, ctx.cursor_y, width, 3)
 
-        border = Term.GREEN if is_focused else Term.DIM
+        params = ("card", title, subtitle, width, is_focused)
+        cached = ctx.cache_get(params)
+        should_draw = ctx._force_full_redraw
 
-        # Top
-        inner = width - 4
-        left = max(0, (inner - len(title)) // 2)
-        right = max(0, inner - len(title) - left)
-        top = f"┌{'─' * left} {title} {'─' * right}┐"
+        if cached is None:
+            border = Term.GREEN if is_focused else Term.DIM
 
-        # Middle
-        mid_inner = width - 2
-        mleft = max(0, (mid_inner - len(subtitle)) // 2)
-        mright = max(0, mid_inner - len(subtitle) - mleft)
-        mid = f"│{' ' * mleft}{subtitle}{' ' * mright}│"
+            # Top
+            inner = width - 4
+            left = max(0, (inner - len(title)) // 2)
+            right = max(0, inner - len(title) - left)
+            top = f"┌{'─' * left} {title} {'─' * right}┐"
 
-        # Bottom
-        bot = f"└{'─' * (width - 2)}┘"
+            # Middle
+            mid_inner = width - 2
+            mleft = max(0, (mid_inner - len(subtitle)) // 2)
+            mright = max(0, mid_inner - len(subtitle) - mleft)
+            mid = f"│{' ' * mleft}{subtitle}{' ' * mright}│"
 
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, f"{border}{top}{Term.RESET}")
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y + 1, f"{border}{mid}{Term.RESET}")
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y + 2, f"{border}{bot}{Term.RESET}")
+            # Bottom
+            bot = f"└{'─' * (width - 2)}┘"
+
+            cached = (
+                f"{border}{top}{Term.RESET}",
+                f"{border}{mid}{Term.RESET}",
+                f"{border}{bot}{Term.RESET}",
+            )
+            ctx.cache_store(params, cached)
+            should_draw = True
+
+        if should_draw:
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, cached[0])
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y + 1, cached[1])
+            ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y + 2, cached[2])
+
         ctx.cursor_y += 3
         return activated
 
@@ -360,17 +464,27 @@ class UI:
                width: int = 30, x=None, y=None) -> None:
         UI._resolve_pos(ctx, x, y)
 
-        border = Term.BLUE
-        top = f"┌{'─' * (width - 2)}┐"
+        lines_tuple = tuple(lines)
+        params = ("window", width, lines_tuple)
+        cached = ctx.cache_get(params)
+        should_draw = ctx._force_full_redraw
 
-        bot = f"└{'─' * (width - 2)}┘"
+        if cached is None:
+            border = Term.BLUE
+            inner_w = width - 2
+            top = f"┌{'─' * inner_w}┐"
+            bot = f"└{'─' * inner_w}┘"
 
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, f"{border}{top}{Term.RESET}")
-        for i, line in enumerate(lines):
-            ctx.buffer.add_at(
-                ctx.cursor_x,
-                ctx.cursor_y + 1 + i,
-                f"{border}│{line.center(width - 2)}│{Term.RESET}",
-            )
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y + 1 + len(lines), f"{border}{bot}{Term.RESET}")
-        ctx.cursor_y += 3
+            rendered = [f"{border}{top}{Term.RESET}"]
+            for line in lines_tuple:
+                rendered.append(f"{border}│{line.center(inner_w)}│{Term.RESET}")
+            rendered.append(f"{border}{bot}{Term.RESET}")
+            cached = tuple(rendered)
+            ctx.cache_store(params, cached)
+            should_draw = True
+
+        if should_draw:
+            for i, row in enumerate(cached):
+                ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y + i, row)
+
+        ctx.cursor_y += len(lines_tuple) + 2
