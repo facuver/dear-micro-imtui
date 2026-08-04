@@ -1,7 +1,8 @@
+import time
 from _imtui_buffer import Buffer
 from _imtui_input import Key, MouseClick
 from _imtui_term import Term
-
+import micropython
 
 class UIContext:
     def __init__(self):
@@ -14,6 +15,8 @@ class UIContext:
         self.cursor_y = 1
         self.text_cache = {}    # (x, y) -> (params, rendered_text)
 
+
+    @micropython.native
     def cached_render(self, params, build):
         """Reuse the cached string at the cursor if `params` match last frame,
         otherwise call `build()` once and store the result."""
@@ -42,6 +45,7 @@ class UIContext:
         self.event = None
         self.buffer.flush()
 
+    @micropython.native
     def register_focusable(self):
         w_id = self.widget_counter
         self.widget_counter += 1
@@ -53,6 +57,7 @@ class UIContext:
 
 class UI:
     # -- layout helpers -------------------------------------------------
+    @micropython.native
     @staticmethod
     def _resolve_pos(ctx: UIContext, x, y):
         if x is not None:
@@ -65,6 +70,8 @@ class UI:
                 ctx.cursor_y = y
 
     # -- primitive ------------------------------------------------------
+    #
+    @micropython.native
     @staticmethod
     def clickable(ctx: UIContext, x: int, y: int, width: int, height: int = 1):
         """
@@ -242,15 +249,20 @@ class UI:
         ctx.cursor_y += 1
         return value
 
+
+    @micropython.native
     @staticmethod
     def slider(ctx: UIContext, label: str, value: int,
                min_val: int = 0, max_val: int = 100, width: int = 20,
                x=None, y=None) -> int:
+        start_time=  time.ticks_us()
 
         UI._resolve_pos(ctx, x, y)
+        t1 = time.ticks_us()
         bar_visual = width + 2  # [....]
         value_w = len(str(max_val))
         total_w = 12+ 1 + bar_visual + 1 + value_w + 3
+        t2 = time.ticks_us()
         is_focused, activated = UI.clickable(ctx, ctx.cursor_x, ctx.cursor_y, total_w, 1)
 
         if is_focused:
@@ -260,8 +272,9 @@ class UI:
             elif ctx.event == Key.RIGHT:
                 value = min(max_val, value + 1)
                 ctx.event = None
+        t3 = time.ticks_us()
 
-        # Cache: only rebuild the string if these params changed since last frame.
+        # Cache: only rebuild the string if these paraus changed since last frame.
         def build():
             ratio = (value - min_val) / (max_val - min_val) if max_val != min_val else 0
             filled = int(width * ratio)
@@ -271,13 +284,16 @@ class UI:
             if is_focused:
                 bar_str = f"{Term.BG_BLUE}{Term.WHITE}{bar_str}{Term.RESET}"
             return f"{' > ' if is_focused else '   '}{label:<12} {bar_str} {value}"
+        t4 = time.ticks_us()
 
         text, hit = ctx.cached_render((label, value, min_val, max_val, width, is_focused), build)
+        t5 = time.ticks_us()
 
-        ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
+        if not hit: ctx.buffer.add_at(ctx.cursor_x, ctx.cursor_y, text)
+        t6 = time.ticks_us()
 
         ctx.cursor_y += 1
-        return value
+        return value,(t1-start_time,t2-t1,t3-t2,t4-t3,t5-t4,t6-t5)
 
     @staticmethod
     def card(ctx: UIContext, title: str, subtitle: str,

@@ -72,10 +72,25 @@ class InputReader:
     def disable_mouse():
         sys.stdout.write("\x1b[?1000l")
 
-    async def read(self):
-        if not _MP:
-            await asyncio.sleep(1)
+    # Time budget (seconds) to wait for the rest of an escape sequence.
+    # Generous enough to survive a busy/slow event loop, but still short
+    # enough that a bare ESC keypress feels instant.
+    ESC_SEQ_TIMEOUT = 0.3
+
+    async def _read_seq_byte(self, reader):
+        """Read one byte of an in-flight escape sequence.
+
+        Returns None if nothing arrives within ESC_SEQ_TIMEOUT, which means
+        the user really did just press ESC (or the terminal sent a partial
+        sequence). Using a wall-clock budget instead of a tiny fixed timeout
+        keeps us non-blocking while tolerating slow event loop iterations.
+        """
+        try:
+            return await asyncio.wait_for(reader.read(1), self.ESC_SEQ_TIMEOUT)
+        except asyncio.TimeoutError:
             return None
+
+    async def read(self):
 
         reader = self.sreader
         if reader is None:
@@ -89,25 +104,29 @@ class InputReader:
 
             # Escape sequences
             if ch == "\x1b":
-                try:
-                    nxt = await asyncio.wait_for(reader.read(1), 0.05)
-                    if nxt in ("[", "O"):
-                        code = await reader.read(1)
-                        if code == "M":
-                            b = await reader.read(1)
-                            x = await reader.read(1)
-                            y = await reader.read(1)
-                            return _parse_mouse(b, x, y)
-                        if code == "A":
-                            return Key.UP
-                        if code == "B":
-                            return Key.DOWN
-                        if code == "C":
-                            return Key.RIGHT
-                        if code == "D":
-                            return Key.LEFT
-                except asyncio.TimeoutError:
+                nxt = await self._read_seq_byte(reader)
+                if nxt is None:
                     return Key.ESCAPE
+                if nxt in ("[", "O"):
+                    code = await self._read_seq_byte(reader)
+                    if code is None:
+                        return Key.ESCAPE
+                    if code == "M":
+                        b = await self._read_seq_byte(reader)
+                        x = await self._read_seq_byte(reader)
+                        y = await self._read_seq_byte(reader)
+                        if None in (b, x, y):
+                            continue
+                        return _parse_mouse(b, x, y)
+                    if code == "A":
+                        return Key.UP
+                    if code == "B":
+                        return Key.DOWN
+                    if code == "C":
+                        return Key.RIGHT
+                    if code == "D":
+                        return Key.LEFT
+                continue
 
             # Control characters
             if ch in ("\r", "\n"):
@@ -120,6 +139,7 @@ class InputReader:
             # Printable
             if len(ch) == 1 and ord(ch) >= 32:
                 return ch
+
 
 
 def _as_ord(ch) -> int:

@@ -2,7 +2,7 @@ from _imtui_compat import _MP, asyncio, sleep_ms, ticks_diff, ticks_ms
 from _imtui_input import InputReader, Key, KeyBindings
 from _imtui_term import Term
 from _imtui_ui import UIContext
-
+import micropython
 
 class App:
     def __init__(self, max_fps: int = 30):
@@ -16,13 +16,14 @@ class App:
 
         self.keybindings = KeyBindings()
         self._setup_default_keybindings()
-
+    @micropython.native
     async def _input_loop(self):
         while self._running:
             event = await self.reader.read()
             if event is not None:
                 self._latest_event = event
 
+    @micropython.native
     async def _ui_loop(self):
         while self._running:
             self.frame_rate = ticks_diff(ticks_ms(), self.last_frame_time)
