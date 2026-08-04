@@ -14,21 +14,33 @@ class UIContext:
         self.cursor_x = 1
         self.cursor_y = 1
         self.text_cache = {}    # (x, y) -> (params, rendered_text)
+        self._last_frame_bottom = 0
+        self._force_full_redraw = False
+        self._force_full_redraw_next = False
 
 
     @micropython.native
     def cached_render(self, params, build):
-        """Reuse the cached string at the cursor if `params` match last frame,
-        otherwise call `build()` once and store the result."""
+        """Reuse cached string unless a full redraw was requested."""
         key = (self.cursor_x, self.cursor_y)
         cached = self.text_cache.get(key)
         if cached is not None and cached[0] == params:
+            # Force one frame to re-send cached rows after terminal clear/redraw.
+            if self._force_full_redraw:
+                return cached[1], False
             return cached[1], True
         text = build()
         self.text_cache[key] = (params, text)
         return text, False
 
     def begin_frame(self, event):
+        # Apply any redraw requested after the previous frame's draw phase.
+        if self._force_full_redraw_next:
+            self._force_full_redraw = True
+            self._force_full_redraw_next = False
+        else:
+            self._force_full_redraw = False
+
         self.widget_count = self.widget_counter
         self.widget_counter = 0
         self.event = event
@@ -43,7 +55,26 @@ class UIContext:
 
     def end_frame(self):
         self.event = None
-        self.buffer.flush()
+
+        # Logical frame height must be tracked independently from dirty writes,
+        # because cached widgets may skip serial output but still be visible.
+        frame_bottom = self.cursor_y - 1
+        if frame_bottom < 0:
+            frame_bottom = 0
+
+        clear_from_y = None
+        if frame_bottom < self._last_frame_bottom:
+            clear_from_y = frame_bottom + 1
+
+        self.buffer.flush(clear_from_y=clear_from_y)
+        self._last_frame_bottom = frame_bottom
+        self._force_full_redraw = False
+
+    def request_full_redraw(self):
+        # Current frame: redraw any cached widgets not rendered yet.
+        self._force_full_redraw = True
+        # Next frame: ensures redraw also works when requested late.
+        self._force_full_redraw_next = True
 
     @micropython.native
     def register_focusable(self):

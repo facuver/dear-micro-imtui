@@ -58,9 +58,14 @@ class App:
             ctx.active_id = (ctx.active_id + 1) % ctx.widget_count
         return True
 
+    def _redraw(self, ctx=None, event=None):
+        Term.clear()
+        self.ctx.request_full_redraw()
+        return True
+
     def _setup_default_keybindings(self):
         # Early: global shortcuts (run before widgets)
-        self.keybindings.bind("r", lambda ctx, e: Term.clear() or True, help="REDRAW", phase="late")
+        self.keybindings.bind("r", self._redraw, help="REDRAW", phase="early")
         self.keybindings.bind("q", lambda ctx, e: self._quit() or True, help="QUIT", phase="late")
 
         # Late: default focus navigation (run only if widgets didn't eat the event)
