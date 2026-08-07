@@ -9,7 +9,7 @@ class PinWidget:
 
         self.modes =("IN","OUT","OPEN DRAIN")
     def __call__(self,ctx):
-        self.mode= UI.select(ctx,f"Pin {self.pin}",self.modes,self.mode, hint=False , x=0)
+        self.mode= UI.select(ctx,f"Pin {self.pin}",self.modes,self.mode, hint=True , x=0)
         pin = machine.Pin(self.pin,self.mode,machine.Pin.PULL_DOWN)
         pin.value( UI.checkbox (ctx,"Value" , pin.value() , y=-1 ,x =30) )
 
@@ -17,7 +17,7 @@ class PinWidget:
 
 class Dashboard(App):
     def __init__(self):
-        super().__init__(max_fps=50)
+        super().__init__(max_fps=100)
         self.power = True
         self.brightness = 70
         self.volume = 45
@@ -42,19 +42,12 @@ class Dashboard(App):
     def on_ui(self):
 
         self.p1(self.ctx)
-        self.p2(self.ctx)
 
-        UI.label(
-            self.ctx,
-            f"{Term.DIM}FPS: {1000 // self.frame_rate}  "
-            f"Widgets: {self.ctx.dirty_lines}{Term.RESET}",
-            x=2,
-        )
+
 
         if UI.button(self.ctx,"Helllo"):
             pass
 
-        return
 
         # return
         if self.show_help:
