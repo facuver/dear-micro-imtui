@@ -1,8 +1,9 @@
 from dear_micro_imtui import App, UI, Term, Key
 import time
+
 class Dashboard(App):
     def __init__(self):
-        super().__init__(max_fps=100)
+        super().__init__(max_fps=10)
         self.power = False
         self.brightness = 40
         self.volume = 60
@@ -10,7 +11,6 @@ class Dashboard(App):
         self.modes = ["ECO", "BALANCED", "PERFORMANCE", "TURBO"]
         self.alert_count = 0
         self.show_help= False
-        self.last_frame_time = time.ticks_ms()
 
     def on_ui(self):
 
@@ -66,8 +66,7 @@ class Dashboard(App):
 
         # -------- Card --------
 
-        card_sub = f"Alerts: {self.alert_count} | Frame time: {time.ticks_ms()-self.last_frame_time }ms"
-        self.last_frame_time = time.ticks_ms()
+        card_sub = f"Alerts: {self.alert_count} | Frame time: {1000//self.frame_rate }ms"
         UI.card(self.ctx, "SYSTEM", card_sub, width=32, x=2)
 
         UI.divider(self.ctx, width=50, x=2)
