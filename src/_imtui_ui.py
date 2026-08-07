@@ -30,7 +30,7 @@ class UIContext:
         self.event = None
         self.cursor_x = 1
         self.cursor_y = 1
-
+        self.dirty_lines = set()
         # (x, y) -> content_hash
         self.buff_cache = {}
 
@@ -63,6 +63,7 @@ class UIContext:
 
         self.buffer.flush(clear_from_y=clear_from_y)
         self._last_frame_bottom = frame_bottom
+        self.dirty_lines.clear()
 
     def clear_cache(self):
         self.buff_cache.clear()
@@ -89,11 +90,12 @@ def _resolve_pos(ctx: UIContext, x, y):
 
 def _cache_hit(ctx: UIContext, content_hash):
     key = (ctx.cursor_x, ctx.cursor_y)
-    return ctx.buff_cache.get(key, None) == content_hash
+    return (ctx.buff_cache.get(key, None) == content_hash) and ctx.cursor_y not in ctx.dirty_lines
 
 
 def _cache_store(ctx: UIContext, content_hash):
     key = (ctx.cursor_x, ctx.cursor_y)
+    ctx.dirty_lines.add(ctx.cursor_y)
     ctx.buff_cache[key] = content_hash
 
 
@@ -251,7 +253,7 @@ def checkbox(ctx: UIContext, label: str, checked: bool, x=None, y=None) -> bool:
         checked = not checked
 
     content_hash = hash((label, checked, is_focused))
-    if not _cache_hit(ctx, content_hash):
+    if not _cache_hit(ctx, content_hash) :
         mark = "X" if checked else " "
         text = f"[{mark}] {label}"
         bg = Term.BG_BLUE if is_focused else ""
@@ -319,6 +321,41 @@ def number_stepper(ctx: UIContext, label: str, value: int,
 
     ctx.cursor_y += 1
     return value
+
+
+@micropython.native
+def select(ctx:UIContext,lable:str,options:tuple=(),value=0,hint=True,x=None,y=None):
+    _resolve_pos(ctx, x, y)
+    is_focused, clicked = clickable(ctx, ctx.cursor_x, ctx.cursor_y, 20, 1)
+
+    if is_focused:
+
+        if ctx.event == Key.LEFT:
+            value -=1
+            ctx.event = None
+        elif ctx.event == Key.RIGHT or clicked:
+            value+=1
+            ctx.event = None
+
+
+        value %=len(options)
+
+
+    content_hash = hash((label,options,value,is_focused))
+    if not _cache_hit(ctx, content_hash):
+        _cache_store(ctx, content_hash)
+
+
+
+        t =  f"{Term.BG_CYAN}<{options[value]}>{Term.RESET}  {Term.DIM}{options if hint else ""}{Term.RESET}"  if is_focused else  f"{options[value]}"
+        ctx.buffer.add_at(ctx.cursor_x,ctx.cursor_y,f"{lable}: {t}")
+
+    ctx.cursor_y +=1
+    return value
+
+
+
+
 
 
 @micropython.native

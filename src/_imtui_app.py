@@ -5,7 +5,7 @@ from _imtui_ui import UIContext
 import micropython
 
 class App:
-    def __init__(self, max_fps: int = 30):
+    def __init__(self, max_fps: int = 30,full_refresh=30):
         self.ctx = UIContext()
         self.reader = InputReader()
         self.fps_ms = int(1000 / max_fps)
@@ -13,7 +13,8 @@ class App:
         self.last_frame_time = ticks_ms()
         self._latest_event = None
         self._running = True
-
+        self.full_refresh_count = full_refresh
+        self.frame_count = full_refresh
         self.keybindings = KeyBindings()
         self._setup_default_keybindings()
     @micropython.native
@@ -26,6 +27,12 @@ class App:
     @micropython.native
     async def _ui_loop(self):
         while self._running:
+            self.frame_count -=1
+            if self.frame_count==0:
+                self.frame_count = self.full_refresh_count
+                self.ctx.clear_cache()
+
+
             self.frame_rate = ticks_diff(ticks_ms(), self.last_frame_time)
             self.last_frame_time = ticks_ms()
 
