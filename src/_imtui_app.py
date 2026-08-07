@@ -60,7 +60,7 @@ class App:
 
     def _redraw(self, ctx=None, event=None):
         Term.clear()
-        self.ctx.request_full_redraw()
+        self.ctx.clear_cache()
         return True
 
     def _setup_default_keybindings(self):

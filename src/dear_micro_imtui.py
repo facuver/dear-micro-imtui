@@ -3,7 +3,8 @@ from _imtui_buffer import Buffer
 from _imtui_compat import _MP, asyncio, sleep_ms as _sleep_ms
 from _imtui_input import InputReader, Key, KeyBindings, MouseClick, _parse_mouse
 from _imtui_term import Term
-from _imtui_ui import UI, UIContext
+import _imtui_ui as UI
+from _imtui_ui import UIContext
 
 __all__ = [
     "_MP",
