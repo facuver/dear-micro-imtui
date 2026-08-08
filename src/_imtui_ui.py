@@ -174,6 +174,25 @@ def badge(ctx: UIContext, label: str, value: str, color=Term.GREEN, x=None, y=No
 
     ctx.cursor_y += 1
 
+def tabs(ctx:UIContext,options:tuple,selected:int,x=None,y=None):
+    _resolve_pos(ctx, x, y)
+    content_hash = hash((options, selected))
+    #┌┐│
+    is_focused,is_activated = clickable(ctx, ctx.cursor_x, ctx.cursor_y,80, 1)
+
+
+    header = f"{Term.UNDERLINE}│ {" │".join(options[:selected])} │{Term.RESET}{Term.BG_MAGENTA if is_focused else ""} {options[selected]} {Term.RESET + Term.UNDERLINE}│ {" │ ".join(options[selected+1:])}│{Term.RESET}"
+    if is_focused:
+        if ctx.event == Key.LEFT:
+            selected -=1
+        elif ctx.event == Key.RIGHT:
+            selected +=1
+        selected %= len(options)
+
+    ctx.buffer.add_at(ctx.cursor_x,ctx.cursor_y,header)
+    ctx.cursor_y+=1
+    return selected
+
 
 def gauge(ctx: UIContext, label: str, value: int, max_val: int,
           width: int = 20, x=None, y=None):

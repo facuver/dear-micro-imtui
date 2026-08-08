@@ -41,8 +41,12 @@ class Dashboard(App):
 
     def on_ui(self):
 
-        self.p1(self.ctx)
 
+        self.selected = UI.tabs(self.ctx, ("Network", "GIPIO","Memory"),self.selected)
+
+        UI.button(self.ctx,("Network", "GIPIO","Memory")[self.selected])
+
+        return
 
 
         if UI.button(self.ctx,"Helllo"):
