@@ -1,3 +1,4 @@
+import random
 import sys
 
 
@@ -55,3 +56,57 @@ class Term:
     @classmethod
     def show_cursor(cls):
         sys.stdout.write("\x1b[?25h")
+
+    @classmethod
+    def save_pos(cls):
+        sys.stdout.write("\x1b[s")
+
+    @classmethod
+    def restore_pos(cls):
+        sys.stdout.write("\x1b[u")
+
+    @classmethod
+    def move_pos(cls,x,y):
+        sys.stdout.write(f"\x1b[{y};{x}H")
+
+    @classmethod
+    def get_pos(cls, timeout=100):
+        import time
+        import select
+
+        sys.stdout.write("\x1b[6n")
+        poll = select.poll()
+        poll.register(sys.stdin, select.POLLIN)
+
+        r = ""
+        deadline = time.ticks_add(time.ticks_ms(), timeout)
+        while True:
+            remaining = time.ticks_diff(deadline, time.ticks_ms())
+            if remaining <= 0:
+                return None
+            if not poll.poll(remaining):
+                return None
+            c = sys.stdin.read(1)
+            if not c:
+                return None
+            r += c
+            if c == "R":
+                break
+        try:
+            y = int(r[r.find("[")+1:r.find(";")])
+            x = int(r[r.find(";")+1:r.find("R")])
+        except Exception as e:
+            print(e)
+            return None
+        return x,y
+
+
+    @classmethod
+    def get_size(cls):
+        cls.save_pos()
+        cls.move_pos(999,999)
+        x,y = cls.get_pos()
+        cls.restore_pos()
+        return x,y
+
+
